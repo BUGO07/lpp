@@ -1,0 +1,18 @@
+fn main() {
+    let x = 0x67ff;
+    let y = 0b1010_1010;
+    let z = 0o755;
+    let a = 0.1;
+    let b = 1;
+    let c = 3d;
+    let d = 5l;
+    let e = 2u;
+    println!("The value of x is: {}", x);
+    println!("The value of y is: {}", y);
+    println!("The value of z is: {}", z);
+    println!("The value of a is: {}", a);
+    println!("The value of b is: {}", b);
+    println!("The value of c is: {}", c);
+    println!("The value of d is: {}", d);
+    println!("The value of e is: {}", e);
+}
