@@ -21,11 +21,63 @@ pub struct Lexer {
 #[derive(Debug, Clone)]
 pub enum Token {
     Identifier(String),
-    Keyword(String),
+    Keyword(Keyword),
     Literal(Literal),
     Operator(Operator),
     Delimiter(Delimiter),
     Eof,
+}
+
+#[derive(Debug, Clone)]
+pub enum Keyword {
+    As,
+    Break,
+    Const,
+    Continue,
+    Else,
+    Enum,
+    Extern,
+    Fn,
+    For,
+    If,
+    In,
+    Let,
+    Loop,
+    Match,
+    Mod,
+    Static,
+    Struct,
+    Type,
+    Use,
+    While,
+}
+
+impl Keyword {
+    pub fn from(s: &str) -> anyhow::Result<Self> {
+        match s {
+            "as" => Ok(Self::As),
+            "break" => Ok(Self::Break),
+            "const" => Ok(Self::Const),
+            "continue" => Ok(Self::Continue),
+            "else" => Ok(Self::Else),
+            "enum" => Ok(Self::Enum),
+            "extern" => Ok(Self::Extern),
+            "fn" => Ok(Self::Fn),
+            "for" => Ok(Self::For),
+            "if" => Ok(Self::If),
+            "in" => Ok(Self::In),
+            "let" => Ok(Self::Let),
+            "loop" => Ok(Self::Loop),
+            "match" => Ok(Self::Match),
+            "mod" => Ok(Self::Mod),
+            "static" => Ok(Self::Static),
+            "struct" => Ok(Self::Struct),
+            "type" => Ok(Self::Type),
+            "use" => Ok(Self::Use),
+            "while" => Ok(Self::While),
+            _ => anyhow::bail!("Invalid keyword: {}", s),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -71,7 +123,7 @@ pub enum Operator {
     Question,     // ?
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Delimiter {
     LParen,      // (
     RParen,      // )
@@ -167,6 +219,131 @@ impl Lexer {
                     Some(&'=') => {
                         self.advance(&chars, 1);
                         Token::Operator(Operator::SubAssign)
+                    }
+                    Some(&first_digit @ '0'..='9') => {
+                        let can_start_signed_number = match self.tokens.last() {
+                            None => true,
+                            Some((token, _)) => match token {
+                                Token::Operator(_) | Token::Keyword(_) => true,
+                                Token::Delimiter(delim) => matches!(
+                                    delim,
+                                    Delimiter::LParen
+                                        | Delimiter::LBrace
+                                        | Delimiter::LBracket
+                                        | Delimiter::Comma
+                                        | Delimiter::Colon
+                                        | Delimiter::DoubleColon
+                                        | Delimiter::ThinArrow
+                                        | Delimiter::ThickArrow
+                                        | Delimiter::Semicolon
+                                ),
+                                _ => false,
+                            },
+                        };
+
+                        if !can_start_signed_number {
+                            Token::Operator(Operator::Minus)
+                        } else {
+                            self.advance(&chars, 1);
+                            let mut numeric_literal = String::from("-");
+                            numeric_literal.push(first_digit);
+
+                            if first_digit == '0'
+                                && let Some(&prefix) = chars.get(self.position)
+                                && matches!(prefix, 'x' | 'b' | 'o')
+                            {
+                                self.advance(&chars, 1);
+                                numeric_literal.push(prefix);
+                                let validator: fn(char) -> bool = match prefix {
+                                    'x' => |ch| ch.is_ascii_hexdigit(),
+                                    'b' => |ch| ch == '0' || ch == '1',
+                                    'o' => |ch| ('0'..='7').contains(&ch),
+                                    _ => unreachable!(),
+                                };
+                                while let Some(&digit) = chars.get(self.position) {
+                                    if validator(digit) {
+                                        self.advance(&chars, 1);
+                                        numeric_literal.push(digit);
+                                    } else if digit == '_' {
+                                        self.advance(&chars, 1);
+                                    } else if digit.is_ascii_whitespace()
+                                        || matches!(
+                                            digit,
+                                            '(' | ')'
+                                                | '{'
+                                                | '}'
+                                                | '['
+                                                | ']'
+                                                | ';'
+                                                | ':'
+                                                | ','
+                                                | '.'
+                                                | '+'
+                                                | '-'
+                                                | '*'
+                                                | '/'
+                                                | '%'
+                                                | '='
+                                                | '!'
+                                                | '<'
+                                                | '>'
+                                                | '&'
+                                                | '|'
+                                                | '^'
+                                                | '?'
+                                                | '\''
+                                                | '"'
+                                        )
+                                    {
+                                        break;
+                                    } else {
+                                        anyhow::bail!(
+                                            "Invalid {} literal: {}{} at {}",
+                                            match prefix {
+                                                'x' => "hexadecimal",
+                                                'b' => "binary",
+                                                'o' => "octal",
+                                                _ => unreachable!(),
+                                            },
+                                            numeric_literal,
+                                            digit,
+                                            span
+                                        );
+                                    }
+                                }
+
+                                Token::Literal(Literal::Numeric(numeric_literal))
+                            } else {
+                                let mut has_dot = false;
+                                while let Some(&next_char) = chars.get(self.position) {
+                                    if matches!(
+                                        next_char,
+                                        'd' | 'D' | 'f' | 'F' | 'u' | 'U' | 'l' | 'L'
+                                    ) {
+                                        self.advance(&chars, 1);
+                                        numeric_literal.push(next_char);
+                                        break;
+                                    }
+                                    if next_char == '.' {
+                                        if has_dot {
+                                            break;
+                                        }
+                                        has_dot = true;
+                                        self.advance(&chars, 1);
+                                        numeric_literal.push(next_char);
+                                    } else if next_char.is_ascii_digit() {
+                                        self.advance(&chars, 1);
+                                        numeric_literal.push(next_char);
+                                    } else if next_char == '_' {
+                                        self.advance(&chars, 1);
+                                    } else {
+                                        break;
+                                    }
+                                }
+
+                                Token::Literal(Literal::Numeric(numeric_literal))
+                            }
+                        }
                     }
                     _ => Token::Operator(Operator::Minus),
                 },
@@ -442,35 +619,35 @@ impl Lexer {
                                 );
                             }
                         }
-                        self.tokens
-                            .push((Token::Literal(Literal::Numeric(numeric_literal)), span));
-                        continue;
-                    }
 
-                    let mut has_dot = false;
-                    while let Some(&next_char) = chars.get(self.position) {
-                        if matches!(next_char, 'd' | 'D' | 'f' | 'F' | 'u' | 'U' | 'l' | 'L') {
-                            self.advance(&chars, 1);
-                            numeric_literal.push(next_char);
-                            break;
-                        }
-                        if next_char == '.' {
-                            if has_dot {
+                        Token::Literal(Literal::Numeric(numeric_literal))
+                    } else {
+                        let mut has_dot = false;
+                        while let Some(&next_char) = chars.get(self.position) {
+                            if matches!(next_char, 'd' | 'D' | 'f' | 'F' | 'u' | 'U' | 'l' | 'L') {
+                                self.advance(&chars, 1);
+                                numeric_literal.push(next_char);
                                 break;
                             }
-                            has_dot = true;
-                            self.advance(&chars, 1);
-                            numeric_literal.push(next_char);
-                        } else if next_char.is_ascii_digit() {
-                            self.advance(&chars, 1);
-                            numeric_literal.push(next_char);
-                        } else if next_char == '_' {
-                            self.advance(&chars, 1);
-                        } else {
-                            break;
+                            if next_char == '.' {
+                                if has_dot {
+                                    break;
+                                }
+                                has_dot = true;
+                                self.advance(&chars, 1);
+                                numeric_literal.push(next_char);
+                            } else if next_char.is_ascii_digit() {
+                                self.advance(&chars, 1);
+                                numeric_literal.push(next_char);
+                            } else if next_char == '_' {
+                                self.advance(&chars, 1);
+                            } else {
+                                break;
+                            }
                         }
+
+                        Token::Literal(Literal::Numeric(numeric_literal))
                     }
-                    Token::Literal(Literal::Numeric(numeric_literal))
                 }
                 'a'..='z' | 'A'..='Z' | '_' => {
                     let mut identifier = String::new();
@@ -489,7 +666,7 @@ impl Lexer {
                         "as" | "break" | "const" | "continue" | "else" | "enum" | "extern"
                         | "fn" | "for" | "if" | "in" | "let" | "loop" | "match" | "mod"
                         | "static" | "struct" | "type" | "use" | "while" => {
-                            Token::Keyword(identifier)
+                            Token::Keyword(Keyword::from(&identifier)?)
                         }
                         _ => Token::Identifier(identifier),
                     }
